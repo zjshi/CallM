@@ -1,0 +1,528 @@
+#!/usr/bin/env python3
+
+from __future__ import division
+
+import sys, os, time, argparse, shutil, hashlib
+import numpy as np
+from operator import itemgetter
+from snps_io import vcf_io, gen_msa, align_assembly
+
+def get_data_type():
+	""" Get program specified by user (species, genes, or snps) """
+	import sys
+	if len(sys.argv) == 1 or sys.argv[1] in ['-h', '--help']:
+		cmd = '%s %s' % (os.path.basename(sys.argv[0]), sys.argv[1])
+		print('usage: %s <data_type> [options]' % cmd)
+		print('')
+		print('description: identify core-genome snps from <data_type>')
+		print('')
+		print('data types:')
+		print('	genomes			 perform multiple alignment of genomes to call SNPs (default)')
+		print('	msa				 use input multiple genome alignment to call SNPs')
+		print('')
+		print("use '%s <data_type> -h' for usage on a specific command" % cmd)
+		print('')
+		quit()
+	elif sys.argv[1] not in ['genomes', 'msa']:
+		sys.exit("\nError: invalid data type\n")
+	else:
+		return sys.argv[1]
+
+def parse_args():
+
+	data_type = get_data_type()
+
+	parser = argparse.ArgumentParser(
+		formatter_class=argparse.RawTextHelpFormatter,
+		add_help=False,
+		usage=argparse.SUPPRESS
+		)
+
+	parser.add_argument('program', help=argparse.SUPPRESS)
+	parser.add_argument('data_type', help=argparse.SUPPRESS)
+
+	io = parser.add_argument_group('input/output')
+	if data_type in ['genomes', 'genomes-alt']:
+		io.add_argument('--fna-dir', type=str, metavar='PATH', required=True,
+			help = """Path to directory of genomes in FASTA format""")
+	elif data_type == 'msa':
+		io.add_argument('--msa-path', type=str, metavar='PATH', required=True,
+			help = """Path to multiple-genome alignment""")
+		io.add_argument('--msa-type', choices=['xmfa-parsnp', 'xmfa-mummer4'], required=True,
+			help = """File format of multiple-genome alignment""")
+
+	if data_type in ['genomes']:
+		io.add_argument('--subset-list', type=str, metavar='PATH', default=None, help = """Path to file contains the names of the fullset or subset of the files in the input directory. Files not in the list will not be included for snp calling""")
+
+	if data_type in ['genomes', 'msa']:
+		io.add_argument('--rep-fna', type=str, metavar='PATH', default=None,
+			help = """Path to the reference genome serving as the template for whole genome alignment""")
+		io.add_argument('--has-completeness', action='store_true', default=False,
+			help = """Toggle for specifying completeness for supplied genomes sequenes. If toggled on, it requries to supply either --completeness or --completeness-list""")
+		io.add_argument('--completeness', type=float, metavar='FLOAT', default=None,
+			help = """Single completeness value for all genomes sequenes (i.e. all genomes have the same completeness)""")
+		io.add_argument('--completeness-list', type=str, metavar='PATH', default=None,
+			help = """Path to list of pairs of genome file name and completeness value, separated by tab character. (note: genome file names should have no duplicates, and should match and cover all files in the directory speficied by --fna-dir)""")
+		io.add_argument('--missing-ratio', type=float, metavar='FLOAT', default=0.05,
+			help = """Parameter defining the missing ratio of core sites even when completeness is 1""")
+		io.add_argument('--min-pid', type=float, metavar='FLOAT', default=0,
+			help = """Parameter defining the minimal identity for including each aligned block, [0, 100]""")
+		io.add_argument('--min-aln-len', type=int, metavar='INT', default=10,
+			help = """Parameter defining the minimal length for including each aligned block""")
+		io.add_argument('--max-pid-delta', type=float, metavar='FLOAT', default=0.1,
+			help = """Parameter defining the maximum identity gap between identity of each aligned block and whole-genome ANI, all alignments with identity less than ANI * (1 - delta) will be purged, [0, 1]""")
+
+	if data_type in ['genomes']:
+		io.add_argument('--skip-align', action='store_true', default=False,
+			help = """skip whole genome sequence or short read alignment, only applicable when alignment has already been done""")
+
+	if data_type in ['genomes']:
+		prep = parser.add_argument_group('preprocessing')
+		
+		prep.add_argument('--keep-redundancy', action='store_true', default=False,
+				help="""Maximum genomic sites to parse (use all); useful for testing""")
+		prep.add_argument('--k', type=int, metavar='INT', default=20,
+			help="""k-mer size for building Mash sketch""")
+		prep.add_argument('--sketch-size', type=int, metavar='INT', default=1000,
+			help="""The number of k-mers per Mash sketch""")
+		prep.add_argument('--start-cutoff', type=float, metavar='FLOAT', default=0.01,
+			help="""The number of k-mers per Mash sketch""")
+
+	io.add_argument('--iter', action='store_true', default=False,
+		help = """calling SNPs iteratively, option for memory saving""")
+
+	io.add_argument('--out-dir', type=str, metavar='PATH', required=True,
+		help="""Directory to store output""")
+
+	snps = parser.add_argument_group('snp-calling')
+	snps.add_argument('--max-sites', type=int, metavar='INT', default=float('inf'),
+		help="""Maximum genomic sites to parse (use all); useful for testing""")
+	snps.add_argument('--min-prev', type=float, metavar='FLOAT', default=1.0,
+		help="""Minimum prevalence (1.0)""")
+	snps.add_argument('--snp-freq', type=float, metavar='FLOAT', default=0.01,
+		help="""Minimum minor allele frequency for SNP calling (0.01)""")
+	snps.add_argument('--max-samples', type=int, metavar='INT', default=float('inf'),
+		help="""Only use a subset of genomes or metagenomes for snp calling""")
+	if data_type == 'reads':
+		snps.add_argument('--sample-depth', type=float, metavar='FLOAT', default=5.0,
+			help="""Minimum depth for including a sample (5.0)""")
+		snps.add_argument('--site-depth', type=int, metavar='INT', default=1,
+			help="""Minimum depth for genotyping a site in a sample (1)""")
+
+	misc = parser.add_argument_group('misc')
+	misc.add_argument("-h", "--help", action="help",
+		help="""Show this help message and exit""")
+	misc.add_argument('--threads', type=int, metavar='INT', default=1,
+		help="""Number of CPUs to use (1)""")
+
+	args = vars(parser.parse_args())
+
+	return args
+
+def run_command(cmd, env=None):
+	import subprocess as sp
+	if env:
+		p = sp.Popen(cmd, shell=True, stdout=sp.PIPE, stderr=sp.PIPE, env=env)
+	else:
+		p = sp.Popen(cmd, shell=True, stdout=sp.PIPE, stderr=sp.PIPE)
+	out, err = p.communicate()
+	if p.returncode != 0:
+		err_msg =  "\nError: the following returned non-zero status: '%s':\n" % cmd
+		err_msg += "\n%s" % err
+		sys.exit(err_msg)
+	else:
+		return out, err
+
+def parallel(function, argument_list, threads):
+	""" Based on: https://gist.github.com/admackin/003dd646e5fadee8b8d6 """
+	import multiprocessing as mp
+	import signal
+	import time
+
+	def init_worker():
+		signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+	pool = mp.Pool(int(threads), init_worker)
+
+	try:
+		results = []
+		for arguments in argument_list:
+			p = pool.apply_async(function, args=arguments)
+			results.append(p)
+		pool.close()
+
+		while True:
+			if all(r.ready() for r in results):
+				return [r.get() for r in results]
+			time.sleep(1)
+
+	except KeyboardInterrupt:
+		pool.terminate()
+		pool.join()
+		sys.exit("\nKeyboardInterrupt")
+
+def reformat_sequence_headers(args):
+	"""
+	Reformat sequence headers in input genomes to prevent parsnp from crashing
+	"""
+	import Bio.SeqIO
+	if 'fna_dir' in args:
+		try: os.makedirs(args['out_dir']+'/temp/genomes')
+		except: pass
+		for file in os.listdir(args['fna_dir']):
+			infile = open(args['fna_dir']+'/'+file)
+			outfile = open(args['out_dir']+'/temp/genomes/'+file, 'w')
+			for seq in Bio.SeqIO.parse(infile, 'fasta'):
+				seq.id = seq.id.replace('-', '_')
+				seq.seq = str(seq.seq).upper()
+				outfile.write('>'+seq.id+'\n'+seq.seq+'\n')
+		infile.close()
+		outfile.close()
+		args['fna_dir'] = args['out_dir']+'/temp/genomes'
+
+	if 'rep_fna' in args and args['rep_fna'] is not None:
+		infile = open(args['rep_fna'])
+		outfile = open(args['out_dir']+'/temp/'+os.path.basename(args['rep_fna']), 'w')
+		for seq in Bio.SeqIO.parse(infile, 'fasta'):
+			seq.id = seq.id.replace('-', '_')
+			seq.seq = str(seq.seq).upper()
+			outfile.write('>'+seq.id+'\n'+seq.seq+'\n')
+		infile.close()
+		outfile.close()
+		args['rep_fna'] = args['out_dir']+'/temp/'+os.path.basename(args['rep_fna'])
+
+def locate_fpaths(args, in_dir, rep_fna=None, subset_list=None):
+	subset_map = dict()
+
+	for f in os.listdir(in_dir):
+		subset_map[f] = 1
+
+	if subset_list is not None:
+		subset_map = dict()
+		with open(subset_list, 'r') as fh:
+			for ln in fh:
+				subset_map[ln.rstrip()] = 1
+
+	args["subset_map"] = subset_map
+
+	ref_path = ""
+	fpaths = []
+
+	# Using the largest genome file in direcory for reference intead of randomly selecting anyone
+	lg_fpath = ""
+	cur_size = 0
+	for f in os.listdir(in_dir):
+		if f in subset_map:
+			fpath = in_dir.rstrip('/')+'/'+f
+			if os.path.isfile(fpath):
+				fstats = os.stat(fpath)
+				fpaths.append(fpath)
+				if fstats.st_size >= cur_size:
+					cur_size = fstats.st_size
+					lg_fpath = fpath
+		else:
+			sys.stderr.write("skip {}\n".format(f))
+
+	if rep_fna is not None: # Using speficied reference genome
+		ref_path = rep_fna
+	else:
+		ref_path = lg_fpath
+
+	args['rep_fna'] = ref_path
+
+	return ref_path, fpaths
+
+def detect_single_chrom(ref_path):
+	single_chrom = True
+	chrom_cnt = 0
+	with open(ref_path, 'r') as fh:
+		for line in fh:
+			if line[0] == '>':
+				chrom_cnt = chrom_cnt + 1
+
+				if chrom_cnt == 1:
+					pass
+				else:
+					single_chrom = False
+					break
+
+	return single_chrom
+
+def register_run_id(args, in_dir):
+	args['run_id'] = in_dir.rstrip('/').split('/')[-1]
+
+	return args['run_id']
+
+def register_msa_id(args, ref_path, fpaths):
+	order_names = []
+
+	for fpath in fpaths:
+		order_names.append(fpath.rstrip('/').split('/')[-1])
+
+	order_names.append(ref_path.rstrip('/').split('/')[-1])
+
+	in_string = "".join(order_names)
+	args['msa_id'] = hashlib.md5(in_string.encode()).hexdigest()
+
+	return args['msa_id']
+
+def auto_min_pid_by_delta(coords_path, idt_delta):
+	min_pid_by_delta = 0
+
+	# fields = [('s1',int),('e1',int),
+	#		  ('s2',int),('e2',int),
+	#		  ('len1',int),('len2',int),
+	#		  ('pid',float),
+	#		  ('c1',str),('c2',str)]
+
+	pids = []
+	with open(coords_path) as f:
+		for i in range(5):
+			next(f)
+		for l in f:
+			values = l.replace(' | ', ' ').split()
+			pid = float(values[6])
+			pids.append(pid)
+
+	avg_pid = sum(pids)/len(pids)
+
+	min_pid_by_delta = avg_pid * (1 - idt_delta)
+
+	return min_pid_by_delta
+
+def run_mummer4_single(fpath, genome_id, ref_fpath, rep_id, out_dir, skip_align, min_pid, min_aln_len, max_pid_delta):
+	print("    %s - %s" % (rep_id, genome_id))
+
+	try: os.makedirs(out_dir)
+	except: pass
+
+	log = open(out_dir+'/log','w')
+
+	if skip_align is True and os.path.isfile("%s/%s.delta" % (out_dir, genome_id)):
+		log.write('nucmer alignment was skipped\n')
+		print('    nucmer alignment skipped\n')
+	else:
+		command = "nucmer %s " % ref_fpath
+		command += "%s " % fpath
+		command += "--prefix %s/%s " % (out_dir, genome_id)
+		out, err = run_command(command)
+		log.write(str(out)+'\n'+str(err))
+
+	command = "delta-filter -q -r "
+	command += "-i %s " % str(min_pid)
+	command += "-l %s " % str(min_aln_len)
+	command += "%s/%s.delta " % (out_dir, genome_id)
+	command += "> %s/%s.filter.delta.1" % (out_dir, genome_id)
+	out, err = run_command(command)
+	log.write(str(out)+'\n'+str(err))
+
+	command = "show-coords "
+	command += "%s/%s.filter.delta.1 " % (out_dir, genome_id)
+	command += "> %s/%s" % (out_dir, 'coords.tmp')
+	out, err = run_command(command)
+	log.write(str(out)+'\n'+str(err))
+
+	coords_path = "{}/{}".format(out_dir, 'coords.tmp')
+	min_pid_by_delta = auto_min_pid_by_delta(coords_path, max_pid_delta)
+
+	command = "delta-filter -q -r "
+	command += "-i %s " % str(min_pid_by_delta)
+	command += "-l %s " % str(min_aln_len)
+	command += "%s/%s.delta " % (out_dir, genome_id)
+	command += "> %s/%s.filter.delta" % (out_dir, genome_id)
+	out, err = run_command(command)
+
+	for utility in ['coords', 'snps', 'diff']:
+		command = "show-%s " % utility
+		command += "%s/%s.filter.delta " % (out_dir, genome_id)
+		command += "> %s/%s" % (out_dir, utility)
+		out, err = run_command(command)
+		log.write(str(out)+'\n'+str(err))
+
+
+def run_mummer4(args):
+	ref_fpath, fpaths = locate_fpaths(args, args['fna_dir'], args['rep_fna'], args['subset_list'])
+
+	register_run_id(args, args['fna_dir'])
+	register_msa_id(args, ref_fpath, fpaths)
+
+	print("reference genome path: %s" % ref_fpath)
+
+	args['mummer4_dir'] = args['out_dir']+'/temp/mummer4/'+args['run_id']
+	try: os.makedirs(args['mummer4_dir'])
+	except: pass
+
+	shutil.copy(ref_fpath, os.path.join(args['mummer4_dir'], 'reference.fna'))
+
+	arg_list = []
+	rep_id = ref_fpath.split('/')[-1].replace('.fna', '')
+
+	print("[paired alignment]: start")
+	for fpath in fpaths:
+		genome_id = fpath.split('/')[-1].replace('.fna', '')
+		out_dir = '%s/aln/%s' % (args['mummer4_dir'], genome_id)
+
+		arg_list.append([fpath, genome_id, ref_fpath, rep_id, out_dir, args['skip_align'], args['min_pid'], args['min_aln_len'], args['max_pid_delta']])
+
+	print("[paired alignment]: done")
+
+	parallel(run_mummer4_single, arg_list, args['threads'])
+
+	msa_path = gen_msa.build_msa(indir=args['mummer4_dir'], overwrite=True, subset=args["subset_map"])
+
+	shutil.copy(os.path.join(args['mummer4_dir'], 'reference.fna'), args['out_dir'])
+
+	args['msa_path'] = msa_path
+	args['msa_type'] = 'xmfa-mummer4'
+
+
+def run_mash_scketch(args):
+	ref_fpath, fpaths = locate_fpaths(args, args['fna_dir'], args['rep_fna'], args['subset_list'])
+
+	register_run_id(args, args['fna_dir'])
+	register_msa_id(args, ref_fpath, fpaths)
+
+	print("reference genome path: %s" % ref_fpath)
+
+	args['mash_dir'] = args['out_dir']+'/temp/mash/'+args['run_id']
+	try: os.makedirs(args['mashdir'])
+	except: pass
+	
+	print("[building mash sketch]: start")
+
+	command = "mash sketch "
+    command += "-p %s " % str(args['threads'])
+    command += "-o %s " % str(args['mash_dir']+'/mash_sketch')
+    command += "-l %s " % str(args['fna_list_path'])
+
+    out, err = run_command(command)
+    log.write(str(out)+'\n'+str(err))
+
+	args['mash_sketch_path'] = mash_sketch_path
+
+def run_mash_dist(args):
+	
+
+	"mash dist ./100044.1k.msh ./100044.1k.msh -p 36 > 100044.1k.dist.tsv"
+
+	return 0
+
+
+
+def main():
+	args = parse_args()
+	cmdl_str = ' '.join(sys.argv[1:])
+
+	try: os.makedirs(args['out_dir'])
+	except: pass
+
+	if args['data_type'] in ['genomes']:
+		if args["has_completeness"]:
+			if args["completeness"]:
+				args["min_prev"] = (1 - float(args["missing_ratio"])) * float(args["completeness"])
+			elif args["completeness_list"]:
+				completeness_map = {}
+				with open(args["completeness_list"], 'w') as fh:
+					for line in fh:
+						items = line.rstrip('').split('\t')
+						completeness_map[items[0]] = float(items[1])
+
+				ref_fpath, fpaths = locate_fpaths(args, args['fna_dir'], args['rep_fna'], args['subset_list'])
+				completenesses = []
+				for fpath in fpaths:
+					fname = fpath.rstrip('/').split('/')[-1]
+					if fname in completeness_map:
+						completenesses.append(completeness_map[fname])
+					else:
+						sys.exit("missing completeness: {}".format(fpath))
+
+				avg_completeness = sum(completenesses)/len(completenesses)
+				args["min_prev"] = (1 - float(args["missing_ratio"])) * avg_completeness
+			else:
+				print("useless option --has-completeness")
+
+	# >>> 1. Generate multiple-genome-alignment or pileups
+
+	# data type is genomes: use parsnp to perform multiple genome alignment
+	start = time.time()
+	if args['data_type'] == 'genomes':
+		print("Running mummer4; start")
+		run_mummer4(args)
+		#args['mummer4_dir'] = '/Users/jasonshi/Documents/zjshi_github/snpMLST/unit_test_raw/snps_from_genomes/Borrelia_burgdorferi_56121/temp/mummer4/54d64396-732c-42b0-8e88-3de63e8a665e/msa.fna'
+		# msa_path = gen_msa.build_msa(indir=args['mummer4_dir'], max_genomes=1280)
+		# args['msa_path'] = '/Users/jasonshi/Documents/zjshi_github/snpMLST/unit_test_raw/snps_from_genomes/Borrelia_burgdorferi_56121/temp/mummer4/54d64396-732c-42b0-8e88-3de63e8a665e/msa.fa'
+		# args['msa_type'] = 'xmfa-mummer4'
+		print("Running mummer4; done!")
+	print("Elapsed time: {}".format(time.time()-start))
+
+
+	# >>> 2. Parse multiple-genome-alignment or pileup and call SNPs
+
+	# fetch generator to parse msa columns or mpileup sites
+	start = time.time()
+	print("Fetching file-type-specific parser; start")
+	if args['data_type'] in ['genomes', 'msa']:
+		from snp_mlst.align_io import msa
+		if args['iter']:
+			site_assembly = msa.iter_parse(args['msa_path'], args['msa_type'], args['max_samples'])
+		else:
+			site_assembly = msa.monolithic_parse(args['msa_path'], args['msa_type'], args['max_samples'])
+	elif args['data_type'] in ['reads', 'bam', 'pileup']:
+		from snp_mlst.map_io import pileup
+		site_assembly = pileup.monolithic_parse(args['plp_csv_dir'], args['rep_fna'])
+	print("Fetching file-type-specific parser; done")
+	print("Elapsed time: {}".format(time.time()-start))
+
+
+	# id core-genome coords and snps
+	start = time.time()
+	print("Identifying core-snps; start")
+	print("max sites: {}".format(args['max_sites']))
+	print("min prevalence: {}".format(args['min_prev']))
+	print("min MAF: {}".format(args['snp_freq']))
+
+	if args['iter']:
+		align_assembs = align_assembly.call_snps_iter(site_assembly, args['max_sites'], args['min_prev'], args['snp_freq'])
+	else:
+		align_assembs = align_assembly.call_snps(site_assembly, args['max_sites'], args['min_prev'], args['snp_freq'])
+	print("Identifying core-snps; done")
+	print("Elapsed time: {}".format(time.time()-start))
+
+	# sys.exit()
+
+	single_chrom_rep = False
+
+	if args['iter'] is True and args['rep_fna'] is not None:
+		single_chrom_rep = detect_single_chrom(args['rep_fna'])
+
+	# write output files
+	start = time.time()
+	print("Writing snps to VCF; start")
+	if args['iter']:
+		header_ready = False
+		coords_buffer = []
+		for align_assemb in align_assembs:
+			if len(align_assemb.snps) > 0:
+				if not header_ready:
+					vcf_io.write_coords_header(coords_buffer, args['out_dir'])
+					vcf_io.write_vcf_header(align_assemb.snps, args['out_dir'], cmdl_str)
+					header_ready = True
+
+				# vcf_io.write_genome(core_genome.consensus_genome, args['out_dir'])
+				coords_buffer = coords_buffer + align_assemb.coords
+				vcf_io.write_vcf(align_assemb.snps, args['out_dir'], single_chrom_rep)
+
+		vcf_io.write_coords(vcf_io.merge_coords(coords_buffer), args['out_dir'])
+		# vcf_io.write_coords(coords_buffer, args['out_dir'])
+	else:
+		vcf_io.write_coords_header(align_assembs.coords, args['out_dir'])
+		vcf_io.write_vcf_header(align_assembs.snps, args['out_dir'], cmdl_str)
+		vcf_io.write_coords(align_assembs.coords, args['out_dir'])
+		# vcf_io.write_genome(core_genome.consensus_genome, args['out_dir'])
+		vcf_io.write_vcf(align_assembs.snps, args['out_dir'])
+	print("Writing snps to VCF; done!")
+	print("Elapsed time: {}".format(time.time()-start))
+
+
+if __name__ == "__main__":
+	main()
