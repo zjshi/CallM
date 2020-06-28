@@ -1,14 +1,14 @@
 from __future__ import division
 
 import sys, os
-import vcf, argparse, operator
+import argparse, operator
 
 import numpy as np
 
 from time import time
 
 class GenomeCluster:
-	def __init__(self, max_d=0.001):
+	def __init__(self, max_d):
 		self.max_d  = max_d
 
 		self.genomes = dict()
@@ -91,24 +91,7 @@ class GenomeCluster:
 
 		return fmt_str
 
-def parse_args():
-	""" Return dictionary of command line arguments
-	"""
-	parser = argparse.ArgumentParser(
-		formatter_class=argparse.RawTextHelpFormatter,
-		usage=argparse.SUPPRESS)
-	parser.add_argument('--dist', type=str, dest='dist_path', required=True,
-		help="""Path to core-genome SNPs""")
-	parser.add_argument('--out-dir', type=str, dest='out_dir', required=True,
-		help="""Path to output directory""")
-	parser.add_argument('--max-sites', dest='max_sites', default=float('inf'), type=int,
-		help="""Number of sites to process from input (use all)""")
-	parser.add_argument('--max-dist', dest='max_d', default=0.001, type=float,
-		help="""Minimum r2 for identifying linked SNPs and loci (0.81)""")
-
-	return vars(parser.parse_args())
-
-def search_genome_clusters(dist_path, args):
+def search_genome_clusters(dist_path, max_d):
 	sys.stderr.write("[clustering] start\n")
 
 	genome_clusters = []
@@ -117,15 +100,15 @@ def search_genome_clusters(dist_path, args):
 	with open(dist_path, 'r') as fh:
 		for line in fh:
 			items = line.rstrip().split('\t')
-			genome1, genome2, d = items[0], items[1], items[2]
+			genome1, genome2, d = items[0], items[1], float(items[2])
 
-			if genome1 >= genome2:
+			if genome1 >= genome2 or d > max_d:
 				#sys.stderr.write("{} {}\n".format(genome1, genome2))
 				continue
 			# sys.stderr.write("{} {}\n".format(genome1, genome2))
 
 			if genome1 not in genome_lookup and genome2 not in genome_lookup:
-				new_cluster = GenomeCluster(float(args['max_d']))
+				new_cluster = GenomeCluster(max_d)
 				new_cluster.add(genome1, genome2, d)
 				genome_clusters.append(new_cluster)
 				genome_lookup[genome1] = len(genome_clusters) - 1
@@ -156,10 +139,7 @@ def search_genome_clusters(dist_path, args):
 
 	good_clusters = verify_clusters(genome_clusters, genome_lookup)
 
-	for gcluster in good_clusters:
-		print gcluster.fmtout_all()
-
-	return good_clusters
+	return good_clusters, len(genome_lookup.keys())
 
 def verify_clusters(genome_clusters, genome_lookup):
 	for genome in genome_lookup.keys():
@@ -176,18 +156,90 @@ def verify_clusters(genome_clusters, genome_lookup):
 
 	return good_clusters
 
-def build_genome_blocks(args):
-	dist_path = args["dist_path"]
+def output_clusters(good_clusters, output_path="/dev/stdout"):
+	if output_path is not None:
+		with open(output_path, 'w') as fh:
+			for gcluster in good_clusters:
+				fh.write(gcluster.fmtout_all())
 
-	genome_clusters = search_genome_clusters(dist_path, args)
+def build_genome_blocks(dist_path, total_n, critical_n=100, max_d=0.01, end_d=0.0001, range_factor=1.2, output_path=None):
+	optimal_d = 0
+	optimal_n = 0
+	optimal_clusters = []
 
-def main():
-	args = parse_args()
-	args['out_dir'] = args['out_dir'].rstrip('/')
-	genome_blocks = build_genome_blocks(args)
+	upper_cap = critical_n * range_factor
 
-	sys.stderr.write("\nDone!\n")
+	genome_clusters, clust_n = search_genome_clusters(dist_path, max_d)
+	
+	tag_n = total_n - clust_n + len(genome_clusters)
 
+	if tag_n > upper_cap:
+		print("Program will continue with a non-optimal number ({}) of genomes. Perhaps try a higher cutoff (current {})".format(str(tag_n), str(max_d)))
+		optimal_d = max_d
+		optimal_n = tag_n
+		optimal_clusters = genome_clusters
+	elif tag_n >= critical_n and tag_n <= upper_cap:
+		optimal_d = max_d
+		optimal_n = tag_n
+		optimal_clusters = genome_clusters
+	else:
+		# determine lower bound
+		min_d = max_d
+		while min_d >= end_d and tag_n < critical_n:
+			min_d = min_d / 10
 
-if __name__ == "__main__":
-	main()
+			genome_clusters, clust_n = search_genome_clusters(dist_path, min_d)
+			tag_n = total_n - clust_n + len(genome_clusters)
+
+		# binary search into critical range
+		if min_d < end_d and tag_n < critical_n:
+			print("Program cannot reach the number ({}) of genomes required for core-genome SNP calling.")
+			print("Proceeding with orginal set of genomes")
+
+			optimal_d = None 
+			optimal_n = None 
+			optimal_clusters = None 
+		else:
+			left_d = max_d
+			right_d = min_d
+			mid_point = int((upper_cap + critical_n) / 2)
+
+			delta_d = 1 # arbitary value; does not matter
+
+			while delta_d > 0.0001 and (tag_n > upper_cap or tag_n < critical_n):
+				cur_d = (left_d + right_d) / 2
+
+				genome_clusters, clust_n = search_genome_clusters(dist_path, cur_d)
+				tag_n = total_n - clust_n + len(genome_clusters)
+
+				if tag_n > mid_point:
+					right_d = cur_d
+				else:
+					left_d = cur_d
+
+				delta_d = abs(left_d - right_d)
+					
+				print(left_d, right_d, cur_d, tag_n)
+
+				if tag_n > critical_n:
+					delta_1 = abs(tag_n - mid_point)
+					delta_2 = abs(optimal_n - mid_point)
+
+					if delta_1 < delta_2:
+						optimal_d = cur_d
+						optimal_n = tag_n
+						optimal_clusters = genome_clusters
+					else:
+						pass
+				else:
+					pass
+
+		if tag_n < critical_n:
+			print("Program cannot reach the number ({}) of genomes required for core-genome SNP calling.")
+			print("Proceeding with orginal set of genomes. Or try higher MAF")
+
+			optimal_d = None 
+			optimal_n = None 
+			optimal_clusters = None 
+
+	return optimal_clusters, optimal_d, optimal_n 

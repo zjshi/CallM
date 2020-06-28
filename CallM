@@ -2,16 +2,18 @@
 
 from __future__ import division
 
-import sys, os, time, argparse, shutil, hashlib
+import sys, os, time, argparse, shutil, hashlib, math
 import numpy as np
 from operator import itemgetter
+
+from snps_io import id_genome_clusters, id_centroid
 from snps_io import vcf_io, gen_msa, align_assembly
 
 def get_data_type():
 	""" Get program specified by user (species, genes, or snps) """
 	import sys
 	if len(sys.argv) == 1 or sys.argv[1] in ['-h', '--help']:
-		cmd = '%s %s' % (os.path.basename(sys.argv[0]), sys.argv[1])
+		cmd = '%s ' % (os.path.basename(sys.argv[0]))
 		print('usage: %s <data_type> [options]' % cmd)
 		print('')
 		print('description: identify core-genome snps from <data_type>')
@@ -38,7 +40,7 @@ def parse_args():
 		usage=argparse.SUPPRESS
 		)
 
-	parser.add_argument('program', help=argparse.SUPPRESS)
+	#parser.add_argument('program', help=argparse.SUPPRESS)
 	parser.add_argument('data_type', help=argparse.SUPPRESS)
 
 	io = parser.add_argument_group('input/output')
@@ -56,7 +58,7 @@ def parse_args():
 
 	if data_type in ['genomes', 'msa']:
 		io.add_argument('--rep-fna', type=str, metavar='PATH', default=None,
-			help = """Path to the reference genome serving as the template for whole genome alignment""")
+			help = """Path to the reference genome serving as the template for whole genome alignment. If provided, CallM will not identify and use centroid genome for reference""")
 		io.add_argument('--has-completeness', action='store_true', default=False,
 			help = """Toggle for specifying completeness for supplied genomes sequenes. If toggled on, it requries to supply either --completeness or --completeness-list""")
 		io.add_argument('--completeness', type=float, metavar='FLOAT', default=None,
@@ -80,13 +82,21 @@ def parse_args():
 		prep = parser.add_argument_group('preprocessing')
 		
 		prep.add_argument('--keep-redundancy', action='store_true', default=False,
-				help="""Maximum genomic sites to parse (use all); useful for testing""")
+			help="""If toggled on, CallM will skip redundancy removal and move on with all input genomes""")
+		prep.add_argument('--skip-centroid', action='store_true', default=False,
+			help="""If toggled on, CallM will not attempt to identify and use centroid genome for reference""")
 		prep.add_argument('--k', type=int, metavar='INT', default=20,
 			help="""k-mer size for building Mash sketch""")
 		prep.add_argument('--sketch-size', type=int, metavar='INT', default=1000,
 			help="""The number of k-mers per Mash sketch""")
+		prep.add_argument('--precut', type=float, metavar='FLOAT', default=0.01,
+			help="""Limit searches among pair of genomes with distance smaller than the provided value""")
 		prep.add_argument('--start-cutoff', type=float, metavar='FLOAT', default=0.01,
-			help="""The number of k-mers per Mash sketch""")
+			help="""The cutoff from which CallM will start to search a distance cutoff, which generate the good number of genome clusters and tag genomes based on a given MAF""")
+		prep.add_argument('--end-cutoff', type=float, metavar='FLOAT', default=0.0001,
+			help="""Similiar to --start-cutoff, the cutoff at which CallM will end the search for a distance cutoff. This value should be smaller than --start-cutoff""")
+		prep.add_argument('--range-factor', type=float, metavar='FLOAT', default=1.2,
+			help="""This factor times the minimum number of genomes needed for a given MAF will create the upper bound of a range satisfying the search. It should be larger than 1.""")
 
 	io.add_argument('--iter', action='store_true', default=False,
 		help = """calling SNPs iteratively, option for memory saving""")
@@ -229,8 +239,7 @@ def locate_fpaths(args, in_dir, rep_fna=None, subset_list=None):
 		ref_path = lg_fpath
 
 	args['rep_fna'] = ref_path
-
-	return ref_path, fpaths
+	args['fna_paths'] = fpaths
 
 def detect_single_chrom(ref_path):
 	single_chrom = True
@@ -341,7 +350,13 @@ def run_mummer4_single(fpath, genome_id, ref_fpath, rep_id, out_dir, skip_align,
 
 
 def run_mummer4(args):
-	ref_fpath, fpaths = locate_fpaths(args, args['fna_dir'], args['rep_fna'], args['subset_list'])
+	ref_fpath = args['rep_fna']
+	if 'tag_ref' in args:
+		ref_fpath = args['tag_ref']
+
+	fpaths = args['fna_paths']
+	if 'tag_genome_paths' in args:
+		fpaths = args['tag_genome_paths']
 
 	register_run_id(args, args['fna_dir'])
 	register_msa_id(args, ref_fpath, fpaths)
@@ -375,9 +390,9 @@ def run_mummer4(args):
 	args['msa_path'] = msa_path
 	args['msa_type'] = 'xmfa-mummer4'
 
-
 def run_mash_scketch(args):
-	ref_fpath, fpaths = locate_fpaths(args, args['fna_dir'], args['rep_fna'], args['subset_list'])
+	ref_fpath = args['rep_fna']
+	fpaths = args['fna_paths']
 
 	register_run_id(args, args['fna_dir'])
 	register_msa_id(args, ref_fpath, fpaths)
@@ -385,27 +400,110 @@ def run_mash_scketch(args):
 	print("reference genome path: %s" % ref_fpath)
 
 	args['mash_dir'] = args['out_dir']+'/temp/mash/'+args['run_id']
-	try: os.makedirs(args['mashdir'])
+
+	try: os.makedirs(args['mash_dir'])
 	except: pass
+
+	args['fna_list_path'] = args['mash_dir'] + '/in_fna.list'
+
+	with open(args['fna_list_path'], 'w') as fh:
+		for fpath in fpaths:
+			fh.write("{}\n".format(fpath))
 	
 	print("[building mash sketch]: start")
 
 	command = "mash sketch "
-    command += "-p %s " % str(args['threads'])
-    command += "-o %s " % str(args['mash_dir']+'/mash_sketch')
-    command += "-l %s " % str(args['fna_list_path'])
+	command += "-p %s " % str(args['threads'])
+	command += "-o %s " % (args['mash_dir']+'/mash_sketch')
+	command += "-l %s " % args['fna_list_path']
 
-    out, err = run_command(command)
-    log.write(str(out)+'\n'+str(err))
+	out, err = run_command(command)
+	sys.stderr.write(str(out)+'\n'+str(err))
 
-	args['mash_sketch_path'] = mash_sketch_path
+	args['mash_sketch_path'] = args['mash_dir']+'/mash_sketch.msh'
 
 def run_mash_dist(args):
+	sketch_path = args['mash_sketch_path']
+
+	assert os.path.exists(sketch_path)
+
+	args['mash_dist_path'] = args['mash_dir'] + '/mash_dist.tsv'
+
+	print("[calculating mash distance]: start")
+
+	command = "mash dist "
+	command += "-p %s " % str(args['threads'])
+	command += "%s %s " % (sketch_path, sketch_path)
+	command += "> %s " % args['mash_dist_path'] 
+
+	out, err = run_command(command)
+	sys.stderr.write(str(out)+'\n'+str(err))
+
+def do_precut(args):
+	dist_path = args['mash_dist_path']
+
+	assert os.path.exists(dist_path)
+
+	args['cut_dist_path'] = args['mash_dir'] + '/mash_dist.cut.tsv'
+
+	print("[cut mash distance: {}]: start".format(str(args['precut'])))
+
+	command = "awk '$3 < %s' " % str(args['precut'])
+	command += "%s " % dist_path
+	command += "> %s " % args['cut_dist_path']
 	
+	out, err = run_command(command)
+	sys.stderr.write(str(out)+'\n'+str(err))
 
-	"mash dist ./100044.1k.msh ./100044.1k.msh -p 36 > 100044.1k.dist.tsv"
+def id_clusters(args):
+	run_mash_scketch(args)
 
-	return 0
+	run_mash_dist(args)
+
+	do_precut(args)
+
+	dist_path = args['cut_dist_path']
+
+	assert os.path.exists(dist_path)
+
+	s_cut = args['start_cutoff']
+	e_cut = args['end_cutoff']
+	r_fac = args['range_factor']
+
+	total_n = len(args['fna_paths'])
+
+	maf = args['snp_freq']
+
+	critical_n = math.ceil(1 / maf)
+	
+	optimal_clusters, optimal_d, optimal_n = id_genome_clusters.build_genome_blocks(dist_path, total_n, critical_n, s_cut, e_cut, r_fac)
+
+	clust_genomes = dict()
+	tag_genomes = []
+	for cluster in optimal_clusters:
+		tag_genomes.append(cluster.tag_genome)
+		for genome in cluster.genomes: 
+			clust_genomes[genome] = 1
+
+	
+	for fpath in args['fna_paths']:
+		if fpath not in clust_genomes:
+			tag_genomes.append(fpath)
+	
+	args['tag_genome_paths'] = tag_genomes
+
+def id_tag_ref(args):
+	assert 'mash_dist_path' in args and os.path.exists(args['mash_dist_path'])
+	assert 'tag_genome_paths' in args and len(args['tag_genome_paths']) > 1
+
+	dist_path = args['mash_dist_path']
+	tag_paths = args['tag_genome_paths']
+
+	centroid = id_centroid.identify(tag_paths, dist_path)
+	
+	print(centroid)
+
+	args['tag_ref'] = centroid
 
 
 
@@ -415,6 +513,13 @@ def main():
 
 	try: os.makedirs(args['out_dir'])
 	except: pass
+
+	skip_centroid = False
+	if args['rep_fna'] is not None:
+		skip_centroid = True
+
+	if args['data_type'] in ['genomes']:
+		locate_fpaths(args, args['fna_dir'], args['rep_fna'], args['subset_list'])
 
 	if args['data_type'] in ['genomes']:
 		if args["has_completeness"]:
@@ -426,9 +531,12 @@ def main():
 					for line in fh:
 						items = line.rstrip('').split('\t')
 						completeness_map[items[0]] = float(items[1])
-
-				ref_fpath, fpaths = locate_fpaths(args, args['fna_dir'], args['rep_fna'], args['subset_list'])
+				
+				ref_fpath = args['rep_fna']
+				fpaths = args['fna_paths']
+				
 				completenesses = []
+
 				for fpath in fpaths:
 					fname = fpath.rstrip('/').split('/')[-1]
 					if fname in completeness_map:
@@ -440,6 +548,13 @@ def main():
 				args["min_prev"] = (1 - float(args["missing_ratio"])) * avg_completeness
 			else:
 				print("useless option --has-completeness")
+
+	if args['data_type'] in ['genomes']:
+		if not args['keep_redundancy']:
+			id_clusters(args)
+
+		if not skip_centroid:
+			id_tag_ref(args)
 
 	# >>> 1. Generate multiple-genome-alignment or pileups
 
@@ -462,14 +577,12 @@ def main():
 	start = time.time()
 	print("Fetching file-type-specific parser; start")
 	if args['data_type'] in ['genomes', 'msa']:
-		from snp_mlst.align_io import msa
+		from align_io import msa
 		if args['iter']:
 			site_assembly = msa.iter_parse(args['msa_path'], args['msa_type'], args['max_samples'])
 		else:
 			site_assembly = msa.monolithic_parse(args['msa_path'], args['msa_type'], args['max_samples'])
-	elif args['data_type'] in ['reads', 'bam', 'pileup']:
-		from snp_mlst.map_io import pileup
-		site_assembly = pileup.monolithic_parse(args['plp_csv_dir'], args['rep_fna'])
+
 	print("Fetching file-type-specific parser; done")
 	print("Elapsed time: {}".format(time.time()-start))
 

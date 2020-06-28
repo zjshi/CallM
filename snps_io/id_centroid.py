@@ -1,37 +1,17 @@
 from __future__ import division
 
 import sys, os
-import vcf, argparse, operator
+import argparse, operator
 
 import numpy as np
 
 from time import time
 
-def parse_args():
-	""" Return dictionary of command line arguments
-	"""
-	parser = argparse.ArgumentParser(
-		formatter_class=argparse.RawTextHelpFormatter,
-		usage=argparse.SUPPRESS)
-	parser.add_argument('--dist', type=str, dest='dist_path', required=True,
-		help="""Path to core-genome SNPs""")
-	parser.add_argument('--tag-list', type=str, dest='tag_path', required=True,
-		help="""Path to core-genome SNPs""")
-	parser.add_argument('--out-dir', type=str, dest='out_dir', required=True,
-		help="""Path to output directory""")
-	parser.add_argument('--max-sites', dest='max_sites', default=float('inf'), type=int,
-		help="""Number of sites to process from input (use all)""")
-	parser.add_argument('--max-dist', dest='max_d', default=0.001, type=float,
-		help="""Minimum r2 for identifying linked SNPs and loci (0.81)""")
-
-	return vars(parser.parse_args())
-
-def read_tags(tag_path):
+def read_tags(tag_paths):
 	tag_map = dict()
-	with open(tag_path, 'r') as fh:
-		for line in fh:
-			tag_genome = line.rstrip()
-			tag_map[tag_genome] = 0
+
+	for tag_genome in tag_paths:
+		tag_map[tag_genome] = 0
 	
 	return tag_map
 
@@ -56,7 +36,7 @@ def calc_tag_weights(tag_map, dist_path):
 
 	return tag_map
 
-def id_centroid(tag_map):
+def centroid_from_map(tag_map):
 	centroid = None
 
 	for tag in tag_map.keys():
@@ -68,20 +48,10 @@ def id_centroid(tag_map):
 
 	return centroid
 
-def main():
-	args = parse_args()
-	
-	tag_path = args["tag_path"]
-	dist_path = args["dist_path"]
-
-
-	tag_map = read_tags(tag_path)
+def identify(tag_paths, dist_path):
+	tag_map = read_tags(tag_paths)
 	tag_map = calc_tag_weights(tag_map, dist_path)
 
-	centroid = id_centroid(tag_map)
+	centroid = centroid_from_map(tag_map)
 
-	sys.stderr.write("\n{}Done!\n".format(centroid))
-
-
-if __name__ == "__main__":
-	main()
+	return centroid
