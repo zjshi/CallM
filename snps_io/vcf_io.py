@@ -58,8 +58,8 @@ def format_snp(snp):
 	record += str(snp.chrom) + "\t" # CHROM
 	record += str(snp.pos) + "\t" # POS
 	record += str(snp.var_id) + "\t" # ID
-	record += snp.ref_allele + "\t" # REF
-	record += snp.avail_alleles + "\t" # ALT
+	record += (snp.ref_allele + b"\t").decode() # REF
+	record += (snp.avail_alleles + b"\t").decode() # ALT
 	record += ".\t" # QUAL
 	record += "PASS\t" # FILTER
 	record += "%s\t" % format_info(snp) # INFO

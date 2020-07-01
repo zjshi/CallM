@@ -68,25 +68,31 @@ class Alignment:
 		count A, T, G, C, N and - for each site on the sequences
 		local_pos stores all local positions of each site on this core-genome division (or alignment)
 		"""
-		As = (self.char_mat == 'A').sum(0)
-		Ts = (self.char_mat == 'T').sum(0)
-		Gs = (self.char_mat == 'G').sum(0)
-		Cs = (self.char_mat == 'C').sum(0)
-		Ns = (self.char_mat == 'N').sum(0)
-		Gaps = (self.char_mat == '-').sum(0)
+		As = np.sum(self.char_mat == b'A', axis=0)
+		Ts = np.sum(self.char_mat == b'T', axis=0)
+		Gs = np.sum(self.char_mat == b'G', axis=0)
+		Cs = np.sum(self.char_mat == b'C', axis=0)
+		Ns = np.sum(self.char_mat == b'N', axis=0)
+		Gaps = np.sum(self.char_mat == b'-', axis=0)
 
-		self.local_pos = np.arange(len(seq.seq))
+		self.local_pos = np.arange(len(self.seqs[0].seq))
 
 		self.count_mat = np.array([As, Ts, Gs, Cs, Ns, Gaps])
+
+		print(self.char_mat)
+		print(self.char_mat == 'A')
+		print(As)
+		print(self.count_mat)
+		print(self.count_mat.shape)
 
 		"""
 		char_template: complete set of chars for each site on the sequences, from which the ref allele and alt allele will be selected
 		"""
 		char_template = np.array([
-			np.repeat('A', self.count_mat.shape[1]),
-			np.repeat('T', self.count_mat.shape[1]),
-			np.repeat('G', self.count_mat.shape[1]),
-			np.repeat('C', self.count_mat.shape[1])
+			np.repeat(b'A', self.count_mat.shape[1]),
+			np.repeat(b'T', self.count_mat.shape[1]),
+			np.repeat(b'G', self.count_mat.shape[1]),
+			np.repeat(b'C', self.count_mat.shape[1])
 			# np.repeat('N', self.count_mat.shape[1])
 			# np.repeat('-', self.count_mat.shape[1])
 		])
@@ -149,17 +155,17 @@ class Alignment:
 		self.third_prob_mat[third_mask] = 1
 		self.forth_prob_mat[forth_mask] = 1
 
-		ref_counts = ref_mask.sum(0)
-		alt_counts = alt_mask.sum(0)
-		third_counts = third_mask.sum(0)
-		forth_counts = forth_mask.sum(0)
+		ref_counts = np.sum(ref_mask, axis=0)
+		alt_counts = np.sum(alt_mask, axis=0)
+		third_counts = np.sum(third_mask, axis=0)
+		forth_counts = np.sum(forth_mask, axis=0)
 		"""
 		the sample presence here only sum up the counts of A, T, G, C for each site, leave out the N and -,
 		it facilitate the calculation of prevalence of the site on certain sequence alignment position
 		ref and alt allele frequencies were calculated with denominator of sample_presence rather than the number of sample.
 		naturally, there is another route to calculate them.
 		"""
-		self.sample_presence = self.count_mat[0:4,:].sum(0)
+		self.sample_presence = np.sum(self.count_mat[0:4,:], axis=0)
 		self.prevalence = self.sample_presence/self.nseqs
 
 		zero_mask = (self.sample_presence == 0)
@@ -177,4 +183,4 @@ class Alignment:
 		self.sample_presence[zero_mask] = 0
 
 		unaligned_masks = (self.count_mat[4:6,:] != 0)
-		self.aligned_pctg = 1 - (unaligned_masks.sum(0) / self.nseqs)
+		self.aligned_pctg = 1 - (np.sum(unaligned_masks, axis=0) / self.nseqs)

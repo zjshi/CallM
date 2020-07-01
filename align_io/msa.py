@@ -1,13 +1,13 @@
 
 def parse_control(msa_path, msa_type, max_sample=float('inf')):
 	if msa_type == 'xmfa-parsnp':
-		from snp_mlst.align_io.xmfa_parsnp_io import parse
+		from align_io.xmfa_parsnp_io import parse
 	elif msa_type == 'xmfa-mummer4':
-		from snp_mlst.align_io.xmfa_mummer4_io import parse
+		from align_io.xmfa_mummer4_io import parse
 	elif msa_type == 'xmfa-mauve':
-		from snp_mlst.align_io.xmfa_mauve_io import parse
+		from align_io.xmfa_mauve_io import parse
 	elif msa_type == 'maf-mugsy':
-		from snp_mlst.align_io.maf_io import parse
+		from align_io.maf_io import parse
 	else:
 		import sys
 		sys.exit("\nError: invalid value for --msa-format: %s\n" % msa_type)
@@ -18,13 +18,13 @@ def monolithic_parse(msa_path, msa_type, max_sample=float('inf')):
 
 def iter_parse_control(msa_path, msa_type, max_sample=float('inf')):
 	if msa_type == 'xmfa-parsnp':
-		from snp_mlst.align_io.xmfa_parsnp_io import iter_parse
+		from align_io.xmfa_parsnp_io import iter_parse
 	elif msa_type == 'xmfa-mummer4':
-		from snp_mlst.align_io.xmfa_mummer4_io import iter_parse
+		from align_io.xmfa_mummer4_io import iter_parse
 	elif msa_type == 'xmfa-mauve':
-		from snp_mlst.align_io.xmfa_mauve_io import iter_parse
+		from align_io.xmfa_mauve_io import iter_parse
 	elif msa_type == 'maf-mugsy':
-		from snp_mlst.align_io.maf_io import iter_parse
+		from align_io.maf_io import iter_parse
 	else:
 		import sys
 		sys.exit("\nError: invalid value for --msa-format: %s\n" % msa_type)

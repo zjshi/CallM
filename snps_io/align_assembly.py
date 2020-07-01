@@ -154,8 +154,8 @@ class AlignAssembly:
 
 		if self.is_spliced:
 			prev_mask = (self.prevalence >= min_prev)
-			snp_mask = (self.alt_freqs >= min_alt_freq) & (self.ref_alleles != 'N') & (self.ref_alleles != '-')
-			wildcard_mask = (self.ref_alleles != 'N') & (self.ref_alleles != '-')
+			snp_mask = (self.alt_freqs >= min_alt_freq) & (self.ref_alleles != b'N') & (self.ref_alleles != b'-')
+			wildcard_mask = (self.ref_alleles != b'N') & (self.ref_alleles != b'-')
 
 			# alt_freq_mask = ((1 - self.ref_freqs - self.alt_freqs) <= (min_alt_freq+0.000000001))
 
@@ -190,11 +190,11 @@ class AlignAssembly:
 	def id_consensus_genome(self):
 		if self.is_spliced:
 			if len(self.ref_alleles) > 0:
-				return ''.join([ref_allele for ref_allele in self.ref_alleles])
+				return b''.join([ref_allele for ref_allele in self.ref_alleles])
 			else:
-				return ''
+				return b''
 		else:
-			return ''
+			return b''
 
 	def id_snps(self, calling_mask):
 		if self.is_spliced:
@@ -245,9 +245,9 @@ class AlignAssembly:
 				alleles = alleles[allele_mask[1:]]
 
 				if len(alleles) == 0:
-					avail_alleles = '.'
+					avail_alleles = b'.'
 				else:
-					avail_alleles = ",".join(alleles)
+					avail_alleles = b','.join(alleles)
 
 				snp = self._make_snp_(
 					chrom, var_id, snp_lc_pos[i],
