@@ -85,13 +85,13 @@ def parse_args():
 			help="""If toggled on, CallM will skip redundancy removal and move on with all input genomes""")
 		prep.add_argument('--skip-centroid', action='store_true', default=False,
 			help="""If toggled on, CallM will not attempt to identify and use centroid genome for reference""")
-		prep.add_argument('--k', type=int, metavar='INT', default=20,
+		prep.add_argument('--sketch-k', type=int, metavar='INT', default=21,
 			help="""k-mer size for building Mash sketch""")
-		prep.add_argument('--sketch-size', type=int, metavar='INT', default=1000,
+		prep.add_argument('--sketch-size', type=int, metavar='INT', default=5000,
 			help="""The number of k-mers per Mash sketch""")
-		prep.add_argument('--precut', type=float, metavar='FLOAT', default=0.01,
+		prep.add_argument('--precut', type=float, metavar='FLOAT', default=0.02,
 			help="""Limit searches among pair of genomes with distance smaller than the provided value""")
-		prep.add_argument('--start-cutoff', type=float, metavar='FLOAT', default=0.01,
+		prep.add_argument('--start-cutoff', type=float, metavar='FLOAT', default=0.02,
 			help="""The cutoff from which CallM will start to search a distance cutoff, which generate the good number of genome clusters and tag genomes based on a given MAF""")
 		prep.add_argument('--end-cutoff', type=float, metavar='FLOAT', default=0.0001,
 			help="""Similiar to --start-cutoff, the cutoff at which CallM will end the search for a distance cutoff. This value should be smaller than --start-cutoff""")
@@ -413,6 +413,8 @@ def run_mash_scketch(args):
 	print("[building mash sketch]: start")
 
 	command = "mash sketch "
+	command += "-k %s " % str(args['sketch_k'])
+	command += "-s %s " % str(args['sketch_size'])
 	command += "-p %s " % str(args['threads'])
 	command += "-o %s " % (args['mash_dir']+'/mash_sketch')
 	command += "-l %s " % args['fna_list_path']
