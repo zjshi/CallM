@@ -135,6 +135,8 @@ def parse_args():
 			help="""Path to multiple sequence alignment file""")
 		db.add_argument('--tag-fna-list', type=str, dest='tag_list', required=True,
 			help="""Path to a list of paths to the tag genomes (FASTA format) which are included in multiple sequence alignment file""")
+		db.add_argument('--fna-dir', type=str, dest='fna_dir', default=None,
+			help="""Path to a list of paths to the tag genomes (FASTA format) which are included in multiple sequence alignment file""")
 		db.add_argument('--coords', type=str, dest='coords', default=None,
 			help="""Path to core genome block coordinate file""")
 		db.add_argument('--genome-name', dest='genome_name', type=str, default='100000',
@@ -177,7 +179,7 @@ def parse_args():
 			help = """Parameter defining the maximum identity gap between identity of each aligned block and whole-genome ANI, all alignments with identity less than ANI * (1 - delta) will be purged, [0, 1]""")
 
 		align = parser.add_argument_group('reads-genotyping')
-		align.add_argument('--mode', default='very-sensitive',
+		align.add_argument('--mode', default='sensitive',
 			choices=['very-fast', 'fast', 'sensitive', 'very-sensitive'],
 			help = """Alignment speed/sensitivity (sensitive)""")
 		align.add_argument('--max-reads', type=int, metavar='INT',
@@ -380,7 +382,9 @@ def run_mummer4_single(fpath, genome_id, ref_fpath, rep_id, out_dir, skip_align,
 		log.write('nucmer alignment was skipped\n')
 		print('	nucmer alignment skipped\n')
 	else:
-		command = "nucmer %s " % ref_fpath
+		command = "nucmer "
+		command += "-t %s " % internal_thread_num
+		command += "%s " % ref_fpath
 		command += "%s " % fpath
 		command += "--prefix %s/%s " % (out_dir, genome_id)
 		out, err = run_command(command)
@@ -419,13 +423,13 @@ def run_mummer4_single(fpath, genome_id, ref_fpath, rep_id, out_dir, skip_align,
 
 
 def run_mummer4(args):
-	ref_fpath = args['rep_fna']
-	if 'tag_ref' in args:
-		ref_fpath = args['tag_ref']
-
 	fpaths = args['fna_paths']
 	if 'tag_genome_paths' in args:
 		fpaths = args['tag_genome_paths']
+		
+	ref_fpath = args['rep_fna']
+	if 'tag_ref' in args:
+		ref_fpath = args['tag_ref']
 
 	register_run_id(args, args['fna_dir'])
 	register_msa_id(args, ref_fpath, fpaths)
@@ -591,13 +595,20 @@ def run_kmerset_validate(args):
 
 	args['kmer_prof_path'] = args['out_dir']+'/kmer_prof.tsv'
 
+	args['check_fna_paths'] = args['out_dir']+'/check_fna_paths.list'
+	if 'fna_paths' in args:
+		with open(args['check_fna_paths'], 'w') as fh:
+			for fpath in args['fna_paths']:
+				fh.write("{}\n".format(fpath))
+
 	print("[validating kmer set]: start")
 
 	command = "callm_db_val "
 	command += "-d %s " % args['kmer_set']
 	command += "-n %s " % args['genome_name']
 	command += "-t %s " % args['threads']
-	command += "-L %s " % args['tag_list'] 
+	#command += "-L %s " % args['tag_list'] 
+	command += "-L %s " % args['check_fna_paths']
 	command += "-o %s " % args['kmer_prof_path']
 
 	out, err = run_command(command)
@@ -688,7 +699,7 @@ def read_input_dir(args, in_dir, subset_list=None):
 
 	fq_pairs = []
 	if len(fq_paths) > 1:
-		fq_pairs = pair_inputs[fq_paths]	
+		fq_pairs = pair_inputs(fq_paths)
 
 	args['fna_paths'] = fna_paths
 	args['fq_paths'] = fq_paths
@@ -726,9 +737,9 @@ def pair_inputs(fq_paths):
 
 	for fqpath in fq_paths:
 		fn_its = fqpath.split("/")[-1].split(".")
-		fq_name_parts = fn_its[0].split["_"]
+		fq_name_parts = fn_its[0].split("_")
 		
-		if len(fq_name_parts != 2):
+		if len(fq_name_parts) != 2:
 			continue
 
 		if fq_name_parts[1] not in ["1", "2"]:
@@ -857,9 +868,22 @@ def genotype_reads(args):
 	try: os.makedirs(outname)
 	except: pass
 
+	mode = 2
+	if args['mode'] == "very-fast":
+		mode = 10
+	elif args['mode'] == "fast":
+		mode = 5
+	elif args['mode'] == 'sensitive':
+		mode = 2
+	elif args['mode'] == 'very-sensitive':
+		mode = 1
+	else:
+		assert False
+
 	command = "iso_gt_mtar "
 	command += "-d %s " % args['kmer_db_path']
 	command += "-t %s " % args['threads']
+	command += "-j %s " % mode
 	command += "-o %s/" % outname
 	command += "%{in} "
 	command += "-f "
@@ -1095,6 +1119,9 @@ def build_db_main(args):
 
 	genome_path, vcf_path, coords_path, tag_list_path = args['ref_genome'], args['vcf'], args['coords'], args['tag_list']
 	k_size, k_type = args['kmer_size'], args['kmer_type']
+
+	if args['fna_dir'] is not None:
+		locate_fpaths(args, args['fna_dir'])
 
 	genome_seq = build_db.open_genome_seq(genome_path)
 	snps = build_db.open_vcf_file(vcf_path)

@@ -162,7 +162,7 @@ def output_clusters(good_clusters, output_path="/dev/stdout"):
 			for gcluster in good_clusters:
 				fh.write(gcluster.fmtout_all())
 
-def build_genome_blocks(dist_path, total_n, critical_n=100, max_d=0.01, end_d=0.0001, range_factor=1.2, output_path=None):
+def build_genome_blocks(dist_path, total_n, critical_n=100, max_d=0.01, end_d=0.000001, range_factor=1.2, output_path=None):
 	optimal_d = 0
 	optimal_n = 0
 	optimal_clusters = []
@@ -185,13 +185,20 @@ def build_genome_blocks(dist_path, total_n, critical_n=100, max_d=0.01, end_d=0.
 	else:
 		# determine lower bound
 		min_d = max_d
+
+		print("[Searching lower cap]")
 		while min_d >= end_d and tag_n < critical_n:
 			min_d = min_d / 10
 
 			genome_clusters, clust_n = search_genome_clusters(dist_path, min_d)
 			tag_n = total_n - clust_n + len(genome_clusters)
 
+			print("\t{}: {} tag genomes".format(min_d, tag_n))
+
+		print("[End earching]")
+
 		# binary search into critical range
+		print("[Searching optimal d-cut]")
 		if min_d < end_d and tag_n < critical_n:
 			print("Program cannot reach the number ({}) of genomes required for core-genome SNP calling.")
 			print("Proceeding with orginal set of genomes")
@@ -206,7 +213,7 @@ def build_genome_blocks(dist_path, total_n, critical_n=100, max_d=0.01, end_d=0.
 
 			delta_d = 1 # arbitary value; does not matter
 
-			while delta_d > 0.0001 and (tag_n > upper_cap or tag_n < critical_n):
+			while delta_d > 0.0000001 and (tag_n > upper_cap or tag_n < critical_n):
 				cur_d = (left_d + right_d) / 2
 
 				genome_clusters, clust_n = search_genome_clusters(dist_path, cur_d)
@@ -219,7 +226,9 @@ def build_genome_blocks(dist_path, total_n, critical_n=100, max_d=0.01, end_d=0.
 
 				delta_d = abs(left_d - right_d)
 					
-				print(left_d, right_d, cur_d, tag_n)
+				print("\tsearching space [ {} , {} ]".format(left_d, right_d))
+				print("\tcurrent d-cut: {}".format(cur_d))
+				print("\tcurrent no of tags: {}".format(tag_n))
 
 				if tag_n > critical_n:
 					delta_1 = abs(tag_n - mid_point)
@@ -233,6 +242,9 @@ def build_genome_blocks(dist_path, total_n, critical_n=100, max_d=0.01, end_d=0.
 						pass
 				else:
 					pass
+
+
+		print("[Searching optimal d-cut]")
 
 		if tag_n < critical_n:
 			print("Program cannot reach the number ({}) of genomes required for core-genome SNP calling.")

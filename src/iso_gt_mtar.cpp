@@ -469,7 +469,7 @@ const ElementType *find_last(const ElementType *first, const ElementType *last, 
 
 int64_t kmer_lookup_chunk(vector<uint64_t> *kmer_matches, const uint64_t *const lmer_index, const uint64_t *const mmers,
 						  const uint64_t *const snps, const char *const window,
-						  const int bytes_in_chunk, const int M2, const string &in_path, const long s_start) {
+						  const int bytes_in_chunk, const int M2, const int jump, const string &in_path, const long s_start) {
 
 	// Reads that contain wildcard characters ('N' or 'n') are split into
 	// tokens at those wildcard characters.  Each token is processed as
@@ -533,7 +533,7 @@ int64_t kmer_lookup_chunk(vector<uint64_t> *kmer_matches, const uint64_t *const 
 		if (MIN_TOKEN_LENGTH <= token_length && token_length <= MAX_TOKEN_LENGTH) {
 
 			// yes, process token
-			for (int j = 0; j <= token_length - K; j = j + 2) {
+			for (int j = 0; j <= token_length - K; j = j + jump) {
 
 				// This kmer_tuple encodes the forward and reverse kmers at seq_buf[j...]
 				uint64_t kmer_tuple[1];
@@ -1107,7 +1107,7 @@ private:
 };
 
 bool kmer_lookup(uint64_t *lmer_index, uint64_t *mmers, uint64_t *snps, int n_inputs,
-				 const char **input_paths, char *o_name, const int M2, const int n_threads, const string &dbbase,
+				 const char **input_paths, char *o_name, const int M2, const int jump, const int n_threads, const string &dbbase,
 				 const bool force, const string &c_prefix) {
 
 	auto s_start = chrono_time();
@@ -1159,7 +1159,7 @@ bool kmer_lookup(uint64_t *lmer_index, uint64_t *mmers, uint64_t *snps, int n_in
 		{
 			vector<uint64_t> kmt;
 			n_reads = kmer_lookup_chunk(&kmt, ref(lmer_index), mmers, snps, sc.buffer_addr + SEGMENT_SIZE * segment_idx,
-										segment_size, M2, results[channel]->in_path, s_start);
+										segment_size, M2, jump, results[channel]->in_path, s_start);
 			sc.release_segment(segment_idx, 1);
 			if (n_reads < 0) {
 				// if negative, n_reads isn't actually a count of reads;  it's a count of chars before the error
@@ -1557,6 +1557,8 @@ int main(int argc, char **argv) {
 	auto L2 = 32;
 	auto M2 = 40;
 
+	auto jump = 2;
+
 	// The default L2 and M3 above are good for 32GB Apple MacBook Pro laptop.
 
 	int n_threads = thread::hardware_concurrency(); // usually 2x the number of physical cores
@@ -1568,7 +1570,7 @@ int main(int argc, char **argv) {
 	auto explicit_m = false;
 
 	int opt;
-	while ((opt = getopt(argc, argv, "fl:m:d:C:t:o:h")) != -1) {
+	while ((opt = getopt(argc, argv, "fl:m:d:C:t:j:o:h")) != -1) {
 		switch (opt) {
 		case 'd':
 			dbflag = true;
@@ -1579,6 +1581,9 @@ int main(int argc, char **argv) {
 			break;
 		case 't':
 			n_threads = max(1, min(8 * n_threads, stoi(optarg)));
+			break;
+		case 'j':
+			jump = stoi(optarg);
 			break;
 		case 'o':
 			oname = optarg;
@@ -1680,7 +1685,7 @@ int main(int argc, char **argv) {
 
 	const auto errors =
 		kmer_lookup(&(lmer_indx[0]), &(mmers[0]), &(snps[0]), argc - optind,
-					(const char **)argv + optind, oname, M2, n_threads, dbbase, force, c_prefix);
+					(const char **)argv + optind, oname, M2, jump, n_threads, dbbase, force, c_prefix);
 
 	if (fd != -1 && mmappedData != NULL) {
 		int rc = munmap(mmappedData, db_filesize);
