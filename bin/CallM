@@ -6,6 +6,8 @@ import sys, os, time, argparse, shutil, hashlib, math
 import numpy as np
 from operator import itemgetter
 
+from Bio import SeqIO
+
 from snps_io import id_genome_clusters, id_centroid
 from snps_io import vcf_io, gen_msa, align_assembly
 
@@ -577,11 +579,15 @@ def id_clusters(args):
 	args['tag_genome_paths'] = tag_genomes
 
 def id_tag_ref(args):
-	assert 'mash_dist_path' in args and os.path.exists(args['mash_dist_path'])
-	assert 'tag_genome_paths' in args and len(args['tag_genome_paths']) > 1
+	if 'mash_dist_path' not in args or not os.path.exists(args['mash_dist_path']):
+		run_mash_scketch(args)
+		run_mash_dist(args)
 
 	dist_path = args['mash_dist_path']
-	tag_paths = args['tag_genome_paths']
+
+	tag_paths = args['fna_paths']
+	if 'tag_genome_paths' in args and len(args['tag_genome_paths']) > 1:
+		tag_paths = args['tag_genome_paths']
 
 	centroid = id_centroid.identify(tag_paths, dist_path)
 	
@@ -771,6 +777,12 @@ def genotype_single_genomes(args):
 	arg_list_gt = []
 	rep_id = ref_fpath.split('/')[-1].replace('.fna', '')
 
+	global ref 
+	ref = read_ref(ref_fpath)
+
+	global genos 
+	genos = extract_genotypes(args['vcf'])
+
 	print("[paired alignment]: start")
 	for fpath in fpaths:
 		genome_id = fpath.split('/')[-1]
@@ -780,14 +792,45 @@ def genotype_single_genomes(args):
 		coord_path = out_dir + '/coords'
 		snp_path = out_dir + '/snps'
 		output = args['out_dir'] + '/' + genome_id + ".tsv"
-		arg_list_gt.append([args['vcf'], coord_path, snp_path, output])
+		arg_list_gt.append([genos, ref, coord_path, snp_path, output])
 
 	print("[paired alignment]: done")
 
 	parallel(run_mummer4_single, arg_list, args['threads'])
 	parallel(run_single_fasta_gt, arg_list_gt, args['threads'])
 
-def run_single_fasta_gt(vcf_path, coord_path, snp_path, output):
+def read_ref(fpath):
+	seq_recs = list(SeqIO.parse(fpath, "fasta"))
+
+	rec_table = dict()
+	for rec in seq_recs:
+		rec_table[rec.id] = str(rec.seq).upper()
+
+	return rec_table
+
+def extract_genotypes(vcf_path):
+	genos = []
+	with open(vcf_path, 'r') as fh:
+		for l in fh:
+			if l[0] == "#":
+				continue
+			else:
+				values = l.rstrip().split('\t')[:5]
+
+				chrom = values[0]
+				pos_r = int(values[1])
+				gid = values[2]
+				allele_ma = values[3]
+				allele_mi = values[4]
+
+				if len(allele_mi) > 1:
+					continue
+
+				genos.append([chrom, str(pos_r), gid, allele_ma, allele_mi])
+
+	return genos 
+
+def run_single_fasta_gt(genos, ref, coord_path, snp_path, output):
 	coord_map = dict()
 
 	with open(coord_path, 'r') as fh:
@@ -827,30 +870,30 @@ def run_single_fasta_gt(vcf_path, coord_path, snp_path, output):
 			snp_map[chrom][pos_r] = [allele_r, allele_a]
 	
 	gtypes = []
-	with open(vcf_path, 'r') as fh:
-		for l in fh:
-			if l[0] == "#":
-				continue
-			else:
-				values = l.rstrip().split('\t')[:5]
+	for geno in genos:
+		chrom = geno[0]
+		pos_r = int(geno[1])
+		gid = geno[2]
+		allele_ma = geno[3]
+		allele_mi = geno[4]
 
-				chrom = values[0]
-				pos_r = int(values[1])
-				gid = values[2]
-				allele_ma = values[3]
-				allele_mi = values[4]
+		if chrom not in coord_map:
+			continue
 
-				if len(allele_mi) > 1:
-					continue
-
-				if chrom in coord_map:
-					for g_range in coord_map[chrom]:
-						if pos_r >= g_range[0] and pos_r <= g_range[1]:
-							if chrom in snp_map and pos_r in snp_map[chrom]:
-								if allele_mi == snp_map[chrom][pos_r][1]:
-									gtypes.append([chrom, str(pos_r), gid, allele_ma, allele_mi, '0', '1'])
-							else:
-								gtypes.append([chrom, str(pos_r), gid, allele_ma, allele_mi, '1', '0'])
+		for g_range in coord_map[chrom]:
+			if pos_r >= g_range[0] and pos_r <= g_range[1]:
+				if chrom in snp_map and pos_r in snp_map[chrom]:
+					if allele_mi == snp_map[chrom][pos_r][1]:
+						gtypes.append([chrom, str(pos_r), gid, allele_ma, allele_mi, '0', '1'])
+					else:
+						gtypes.append([chrom, str(pos_r), gid, allele_ma, allele_mi, '1', '0'])
+				else:
+					assert chrom in ref	
+					allele_r = ref[chrom][pos_r]
+					if allele_mi == allele_r:
+						gtypes.append([chrom, str(pos_r), gid, allele_ma, allele_mi, '0', '1'])
+					else:
+						gtypes.append([chrom, str(pos_r), gid, allele_ma, allele_mi, '1', '0'])
 
 	with open(output, 'w') as fw:
 		for gtype in gtypes:
@@ -991,10 +1034,6 @@ def run_parse_single(vcf_path, gt_path, output):
 def call_snps_main(args):
 	cmdl_str = ' '.join(sys.argv[1:])
 
-	skip_centroid = False
-	if args['rep_fna'] is not None:
-		skip_centroid = True
-
 	if args['data_type'] in ['genomes']:
 		locate_fpaths(args, args['fna_dir'], args['rep_fna'], args['subset_list'])
 
@@ -1030,8 +1069,12 @@ def call_snps_main(args):
 		if not args['keep_redundancy']:
 			id_clusters(args)
 
-		if not skip_centroid:
+		if args['skip_centroid']:
+			assert args['rep_fna'] is not None
+			assert os.path.exists(args['rep_fna'])
+		else:
 			id_tag_ref(args)
+
 
 	# >>> 1. Generate multiple-genome-alignment or pileups
 
