@@ -28,7 +28,7 @@ class GenomeCluster:
 		if genome2 not in self.genomes:
 			self.genomes[genome2] = 1
 		else:
-			self.genomes[genome1] = self.genomes[genome1] + 1
+			self.genomes[genome2] = self.genomes[genome2] + 1
 
 		link = "{}|{}".format(genome1, genome2)
 		if genome1 > genome2:
