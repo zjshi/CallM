@@ -1,14 +1,14 @@
 # CallM
 
-CallM for efficient core SNPs calling from microbial core-genomes  
+CallM for efficient identification of microbial common SNPs  
 
 ## What CallM does
 
-Recent spikes in available whole-genome sequences have greatly expanded intra-species diversity especially for prevalent species. However, the increasing availability also introduced high-level of redundancy which imposed computing burden for core-genome SNP calling. The issue will exacerbate as the trend is irreversible. CallM presented here is a tool free of read alingment and assembly, which detects subspecies structure in conspecific genomes and picks tag and reference genomes for rapid and sensitive core-genome SNP calling in both sequencing reads and whole genomes. CallM runs orders of magnitude faster with less RAM use and recovers more core-genome SNPs comparing to other the-state-of-art tools.
+Recent spikes in available whole-genome sequences have greatly expanded intra-species diversity especially for prevalent species. However, the increasing availability also introduced high-level of redundancy which imposed computing burden for core-genome SNP calling. The issue will exacerbate as the trend is irreversible. CallM presented here is a tool free of read alignment and assembly, which detects subspecies structure in conspecific genomes and picks tag and reference genomes for rapid and sensitive core-genome SNP calling in both sequencing reads and whole genomes. CallM runs orders of magnitude faster with less RAM use and recovers more core-genome SNPs comparing to other the-state-of-art tools.
 
 ## How to cite
 
-The publication of CallM is in preparation.  
+The publication of CallM is in preparation. Please cite this GitHub repo as alternative for now. 
 
 ## Installation
 
@@ -27,11 +27,11 @@ The publication of CallM is in preparation.
 * [Mash](https://github.com/marbl/Mash) (>= v2.2)
 * [MUMmer4](https://github.com/mummer4/mummer) (>= v4.0.0)
 
-## Tutorial
+## Tutorial to start
 
-`cd /path/to/CallM/bin/`
-`source ./path_exp.sh`
-`CallM -h`
+`cd /path/to/CallM/bin/`  
+`source ./path_exp.sh`  
+`CallM -h`  
 
 ## Examples
 
