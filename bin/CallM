@@ -101,7 +101,7 @@ def parse_args():
 			help="""k-mer size for building Mash sketch""")
 		prep.add_argument('--sketch-size', type=int, metavar='INT', default=5000,
 			help="""The number of k-mers per Mash sketch""")
-		prep.add_argument('--precut', type=float, metavar='FLOAT', default=0.02,
+		prep.add_argument('--precut', type=float, metavar='FLOAT', default=0.05,
 			help="""Limit searches among pair of genomes with distance smaller than the provided value""")
 		prep.add_argument('--start-cutoff', type=float, metavar='FLOAT', default=0.02,
 			help="""The cutoff from which CallM will start to search a distance cutoff, which generate the good number of genome clusters and tag genomes based on a given MAF""")
@@ -838,8 +838,9 @@ def run_single_fasta_gt(genos, ref, coord_path, snp_path, output):
 			next(fh)
 		for l in fh:
 			values = l.replace(' | ', ' ').split()
-			start = int(values[0])
-			end = int(values[1])
+			# position in coords file is 1 indexed compared to 0 indexed in vcf
+			start = int(values[0]) - 1
+			end = int(values[1]) - 1
 			chrom = values[7]
 
 			assert end > start
@@ -856,7 +857,8 @@ def run_single_fasta_gt(genos, ref, coord_path, snp_path, output):
 			next(fh)
 		for l in fh:
 			values = l.replace(' | ', ' ').split()
-			pos_r = int(values[0])
+			# position in snps file is 1 indexed compared to 0 indexed in vcf
+			pos_r = int(values[0]) - 1 
 			allele_r = values[1]
 			allele_a = values[2]
 			chrom = values[10]
