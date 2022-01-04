@@ -181,7 +181,7 @@ def parse_args():
 			help = """Parameter defining the maximum identity gap between identity of each aligned block and whole-genome ANI, all alignments with identity less than ANI * (1 - delta) will be purged, [0, 1]""")
 
 		align = parser.add_argument_group('reads-genotyping')
-		align.add_argument('--mode', default='sensitive',
+		align.add_argument('--mode', default='very-sensitive',
 			choices=['very-fast', 'fast', 'sensitive', 'very-sensitive'],
 			help = """Alignment speed/sensitivity (sensitive)""")
 		align.add_argument('--max-reads', type=int, metavar='INT',
@@ -546,12 +546,6 @@ def id_clusters(args):
 
 	run_mash_dist(args)
 
-	do_precut(args)
-
-	dist_path = args['cut_dist_path']
-
-	assert os.path.exists(dist_path)
-
 	s_cut = args['start_cutoff']
 	e_cut = args['end_cutoff']
 	r_fac = args['range_factor']
@@ -562,7 +556,18 @@ def id_clusters(args):
 
 	critical_n = math.ceil(1 / maf)
 	
-	optimal_clusters, optimal_d, optimal_n = id_genome_clusters.build_genome_blocks(dist_path, total_n, critical_n, s_cut, e_cut, r_fac)
+	do_precut(args)
+	dist_path = args['cut_dist_path']
+	assert os.path.exists(dist_path)
+
+	optimal_clusters, optimal_d, optimal_n = [], None, None
+	while s_cut <= args['precut']:
+		optimal_clusters, optimal_d, optimal_n, firstcut_exit = id_genome_clusters.build_genome_blocks(dist_path, total_n, critical_n, s_cut, e_cut, r_fac)
+		if firstcut_exit is True:
+			s_cut = s_cut + 0.01
+		else:
+			break
+		
 
 	clust_genomes = dict()
 	tag_genomes = []
@@ -1066,6 +1071,11 @@ def call_snps_main(args):
 				args["min_prev"] = (1 - float(args["missing_ratio"])) * avg_completeness
 			else:
 				print("useless option --has-completeness")
+	
+	if len(args['fna_paths']) <= math.ceil(1 / args['snp_freq']):
+		print("[Warning] Total number of genomes ({}) < min. number of genomes required for effective SNP calling with MAF {} ({})".format(len(args['fna_paths']), args['snp_freq'], math.ceil(1 / args['snp_freq'])))
+		print("[Warning] Skip tag genome selection, all genomes will be used")
+		args['keep_redundancy'] = True
 
 	if args['data_type'] in ['genomes']:
 		if not args['keep_redundancy']:

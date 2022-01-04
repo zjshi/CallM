@@ -252,7 +252,7 @@ class AlignAssembly:
 				snp = self._make_snp_(
 					chrom, var_id, snp_lc_pos[i],
 					snp_refs[i], snp_alts[i], snp_third[i], snp_forth[i], avail_alleles,
-					snp_presence[i], snp_presence[i], round(snp_alt_freqs[i], 3),
+					len(self.sample_ids), snp_presence[i], round(snp_alt_freqs[i], 3),
 					self.sample_ids, snp_ref_prob_row, snp_alt_prob_row, snp_third_prob_row, snp_forth_prob_row
 				)
 				snps.append(snp)

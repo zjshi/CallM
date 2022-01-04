@@ -173,12 +173,15 @@ def build_genome_blocks(dist_path, total_n, critical_n=100, max_d=0.01, end_d=0.
 	
 	tag_n = total_n - clust_n + len(genome_clusters)
 
+	firstcut_exit = False
 	if tag_n > upper_cap:
 		print("Program will continue with a non-optimal number ({}) of genomes. Perhaps try a higher cutoff (current {})".format(str(tag_n), str(max_d)))
 		optimal_d = max_d
 		optimal_n = tag_n
 		optimal_clusters = genome_clusters
+		firstcut_exit = True
 	elif tag_n >= critical_n and tag_n <= upper_cap:
+		# perfect scenario on exit
 		optimal_d = max_d
 		optimal_n = tag_n
 		optimal_clusters = genome_clusters
@@ -230,7 +233,7 @@ def build_genome_blocks(dist_path, total_n, critical_n=100, max_d=0.01, end_d=0.
 				print("\tcurrent d-cut: {}".format(cur_d))
 				print("\tcurrent no of tags: {}".format(tag_n))
 
-				if tag_n > critical_n:
+				if tag_n >= critical_n:
 					delta_1 = abs(tag_n - mid_point)
 					delta_2 = abs(optimal_n - mid_point)
 
@@ -246,7 +249,7 @@ def build_genome_blocks(dist_path, total_n, critical_n=100, max_d=0.01, end_d=0.
 
 		print("[Searching optimal d-cut]")
 
-		if tag_n < critical_n:
+		if tag_n < critical_n and optimal_n < critical_n:
 			print("Program cannot reach the number ({}) of genomes required for core-genome SNP calling.")
 			print("Proceeding with orginal set of genomes. Or try higher MAF")
 
@@ -254,4 +257,4 @@ def build_genome_blocks(dist_path, total_n, critical_n=100, max_d=0.01, end_d=0.
 			optimal_n = None 
 			optimal_clusters = None 
 
-	return optimal_clusters, optimal_d, optimal_n 
+	return optimal_clusters, optimal_d, optimal_n, firstcut_exit 
