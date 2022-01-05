@@ -29,9 +29,7 @@ The publication of CallM is in preparation. Please cite this GitHub repo as alte
 
 ## Tutorial to start
 
-`cd /path/to/CallM/bin/`  
-`source ./path_exp.sh`  
-`CallM -h`  
+`./CallM -h`  
 
 ## Examples
 
