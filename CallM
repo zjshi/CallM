@@ -1,0 +1,23 @@
+#!/bin/bash
+
+Version()
+{
+   # Display version 
+   echo "CallM version 1.0.1"
+}
+
+# automatic path exporting
+REALME=`realpath $0`
+CALLM=`dirname ${REALME}`
+EBSROOT=`dirname ${CALLM}`
+export PATH=$PATH:${CALLM}/bin/
+export PYTHONPATH=$PYTHONPATH:${CALLM}
+
+# controller calling functional modules
+if [ "$1" = "-v" ] || [ "$1" = "--version" ] || [ "$1" = "version" ] || [ "$1" = "-version" ]; then
+	Version	
+elif [ "$1" = "-h" ] || [ "$1" = "-help" ] || [ "$1" = "help" ] || [ "$1" = "--help" ]; then
+	CallM.py -h	
+else
+	CallM.py $*
+fi
