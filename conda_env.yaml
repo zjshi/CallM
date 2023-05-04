@@ -1,0 +1,16 @@
+name: callm
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.9
+  - ujson=5.7.0
+  - psutil=5.9.5
+  - numpy=1.24.3
+  - pandas=2.0.1
+  - biopython=1.81
+  - pysam=0.21.0
+  - pyvcf3=1.0.3
+  - mash=2.3
+  - mummer4=4.0.0
