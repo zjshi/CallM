@@ -2,6 +2,10 @@
 
 CallM for efficient identification of microbial common SNPs  
 
+## Important note
+
+CallM now has been replaced by Maast (https://github.com/zjshi/Maast)  
+
 ## What CallM does
 
 Recent spikes in available whole-genome sequences have greatly expanded intra-species diversity especially for prevalent species. However, the increasing availability also introduced high-level of redundancy which imposed computing burden for core-genome SNP calling. The issue will exacerbate as the trend is irreversible. CallM presented here is a tool free of read alignment and assembly, which detects subspecies structure in conspecific genomes and picks tag and reference genomes for rapid and sensitive core-genome SNP calling in both sequencing reads and whole genomes. CallM runs orders of magnitude faster with less RAM use and recovers more core-genome SNPs comparing to other the-state-of-art tools.
